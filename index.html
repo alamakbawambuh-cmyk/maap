@@ -1,39 +1,118 @@
-<!doctype html>
+
+<!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="utf-8">
-<title>LoHChat Realtime</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LoHChat Full WA-like</title>
+<script src="https://www.gstatic.com/firebasejs/10.15.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.15.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.15.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.15.0/firebase-storage-compat.js"></script>
 <style>
-body{margin:0;font-family:sans-serif;background:#0b1220;color:#e6eef8}
-.app{display:flex;height:100vh}
-.sidebar{width:300px;background:#0f1724;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto}
-.brand{font-weight:700;color:#7dd3fc}
-input,button{width:100%;padding:8px;margin-bottom:4px;border-radius:6px;background:#0b1220;color:#e6eef8;border:1px solid #555}
-.contacts{flex:1;overflow:auto}
-.contact{padding:6px;margin-bottom:6px;background:rgba(255,255,255,0.05);cursor:pointer}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:sans-serif;background:#0b1220;color:#e6eef8}
+.app{display:flex;flex-direction:row;height:100vh}
+.sidebar{width:280px;background:#0f1724;padding:10px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;transition:0.3s}
 .main{flex:1;display:flex;flex-direction:column}
-.chat-header{padding:10px;border-bottom:1px solid rgba(255,255,255,0.03)}
-.messages{flex:1;padding:12px;overflow:auto}
-.msg{max-width:60%;padding:8px;border-radius:8px;margin-bottom:6px;background:rgba(255,255,255,0.05);word-break:break-word}
+.chat-header{padding:10px;border-bottom:1px solid rgba(255,255,255,0.1)}
+.messages{flex:1;padding:12px;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.msg{max-width:70%;padding:8px;border-radius:10px;background:rgba(255,255,255,0.05);word-break:break-word}
 .msg.me{margin-left:auto;background:#3b82f6;color:white}
-.composer{display:flex;gap:6px;padding:10px;border-top:1px solid rgba(255,255,255,0.03)}
+.composer{display:flex;gap:5px;padding:10px;border-top:1px solid rgba(255,255,255,0.1)}
+input,button{padding:8px;border-radius:6px;border:1px solid #555;background:#0b1220;color:#e6eef8}
+.contact{padding:8px;background:rgba(255,255,255,0.05);margin-bottom:4px;cursor:pointer;border-radius:6px;display:flex;align-items:center;gap:6px}
+.contact img{width:32px;height:32px;border-radius:50%}
+.status-dot{width:8px;height:8px;border-radius:50%;background:#34eb34;display:inline-block;margin-left:4px}
+.power-indicator{width:16px;height:16px;border-radius:50%;margin-left:auto}
+@media(max-width:768px){.app{flex-direction:column}.sidebar{width:100%;height:auto}.main{height:70vh}}
 </style>
 </head>
 <body>
 <div class="app">
   <div class="sidebar">
-    <div class="brand">LoHChat Realtime</div>
+    <div class="brand"><strong>LoHChat Full</strong></div>
     <div id="auth-area">
-      <input id="phone" placeholder="Nomor HP +62..."/>
+      <input id="phone" placeholder="Nomor HP +62"/>
       <input id="name" placeholder="Nama Kamu"/>
-      <button id="login-btn">Login</button>
+      <input type="file" id="avatar-file"/>
+      <button id="login-btn">Login / Register</button>
     </div>
     <div id="user-area" style="display:none">
       <h4>Kontak</h4>
-      <div class="contacts" id="contacts"></div>
+      <div id="contacts" class="contacts"></div>
       <input id="add-name" placeholder="Nama kontak"/>
+      <input id="add-phone" placeholder="Nomor kontak"/>
+      <button id="add-contact">Tambah Kontak</button>
+      <h4>Status</h4>
+      <input id="status-text" placeholder="Tulis status teks"/>
+      <input type="file" id="status-media"/>
+      <button id="post-status">Upload Status</button>
+      <button id="logout">Logout</button>
+    </div>
+  </div>
+  <div class="main">
+    <div class="chat-header" id="chat-header">Pilih kontak</div>
+    <div class="messages" id="messages"></div>
+    <div class="composer" id="composer" style="display:none">
+      <input id="msg-input" placeholder="Tulis pesan..."/>
+      <input type="file" id="msg-file"/>
+      <button id="send-msg">Kirim</button>
+      <button id="send-loc">Kirim Lokasi</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Firebase config
+const firebaseConfig = {
+  apiKey: "AIzaSyCu3S68vkoEF3vCu63zfMoXgiU3FPmrcHM",
+  authDomain: "chatappsatzz.firebaseapp.com",
+  projectId: "chatappsatzz",
+  storageBucket: "chatappsatzz.firebasestorage.app",
+  messagingSenderId: "521396337733",
+  appId: "1:521396337733:web:ec96b8f423e449e820372c"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+const storage = firebase.storage();
+
+let me=null, currentChat=null;
+
+// Power colors
+const powerColors = ['#800080','#9b30ff','#0000ff','#3399ff','#ff00ff','#ff66ff'];
+
+// ===== Helpers =====
+function el(id){return document.getElementById(id);}
+function scrollBottom(){el('messages').scrollTop=el('messages').scrollHeight;}
+function getPowerColor(level,status){if(status==='dead') return 'gray'; return powerColors[level]||powerColors[0];}
+
+// ===== Login =====
+el('login-btn').onclick=async ()=>{
+  const phone=el('phone').value.trim();
+  const name=el('name').value.trim();
+  if(!phone||!name) return alert('Isi nomor & nama');
+  me={phone,name};
+  let avatarURL=null;
+  const fileInput=el('avatar-file');
+  if(fileInput.files.length>0){
+    const f=fileInput.files[0];
+    const path='avatars/'+phone+'_'+f.name;
+    const snap = await storage.ref(path).put(f);
+    avatarURL = await snap.ref.getDownloadURL();
+  }
+  await db.collection('users').doc(phone).set({
+    phone,name,avatarURL,lastActive:Date.now(),
+    powerLevel:0,powerStatus:'alive',powerLastUpdate:Date.now()
+  },{merge:true});
+  el('auth-area').style.display='none';
+  el('user-area').style.display='block';
+};
+
+</script>
+</body>
+</html>
       <input id="add-phone" placeholder="Nomor kontak"/>
       <button id="add-contact">Tambah Kontak</button>
       <button id="logout">Logout</button>
@@ -54,8 +133,8 @@ input,button{width:100%;padding:8px;margin-bottom:4px;border-radius:6px;backgrou
 <script>
 // ======== Supabase config ========
 // Ganti dengan Supabase URL & anon key kamu
-const SUPABASE_URL = "https://YOUR_PROJECT.supabase.co";
-const SUPABASE_KEY = "YOUR_ANON_KEY";
+const SUPABASE_URL = "https://nekgwkkucyjlxayvlgty.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5la2d3a2t1Y3lqbHhheXZsZ3R5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1MDI1NjgsImV4cCI6MjA3NjA3ODU2OH0.k1YDTUF5qmcRG99mQr-DF8F6BSQP-0NJb2Sc5RtIDI0";
 const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let me=null, currentChat=null;
