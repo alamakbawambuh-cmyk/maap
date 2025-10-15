@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>LoHChat Local</title>
+<style>
+body{margin:0;font-family:sans-serif;background:#0b1220;color:#e6eef8}
+.app{display:flex;height:100vh}
+.sidebar{width:280px;background:#0f1724;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+.brand{font-weight:700;color:#7dd3fc}
+input,button{width:100%;padding:6px;margin-bottom:4px;border-radius:6px;background:#0b1220;color:#e6eef8;border:1px solid #555}
+.contacts{flex:1;overflow:auto}
+.contact{padding:6px;margin-bottom:6px;background:rgba(255,255,255,0.05);cursor:pointer}
+.main{flex:1;display:flex;flex-direction:column}
+.chat-header{padding:10px;border-bottom:1px solid rgba(255,255,255,0.03)}
+.messages{flex:1;padding:12px;overflow:auto}
+.msg{max-width:60%;padding:8px;border-radius:8px;margin-bottom:6px;background:rgba(255,255,255,0.05);word-break:break-word}
+.msg.me{margin-left:auto;background:#3b82f6;color:white}
+.composer{display:flex;gap:6px;padding:10px;border-top:1px solid rgba(255,255,255,0.03)}
+.small{font-size:12px;color:#94a3b8}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="brand">LoHChat Local</div>
+    <div id="auth-area">
+      <input id="phone" placeholder="Nomor HP +62..." />
+      <button id="login-btn">Login (simulasi OTP)</button>
+    </div>
+    <div id="user-area" style="display:none">
+      <div><strong id="me-name"></strong><div class="small" id="me-phone"></div></div>
+      <input id="add-name" placeholder="Nama kontak" />
+      <input id="add-phone" placeholder="Nomor kontak" />
+      <button id="add-contact">Tambah Kontak</button>
+      <h4 class="small">Kontak</h4>
+      <div class="contacts" id="contacts"></div>
+      <button id="logout">Logout</button>
+    </div>
+  </div>
+  <div class="main">
+    <div class="chat-header" id="chat-header">Pilih kontak</div>
+    <div class="messages" id="messages"></div>
+    <div class="composer" id="composer" style="display:none">
+      <input type="text" id="msg-input" placeholder="Tulis pesan..." />
+      <input type="file" id="msg-file" />
+      <button id="send-msg">Kirim</button>
+      <button id="send-loc">Kirim Lokasi</button>
+    </div>
+  </div>
+</div>
+<script>
+let me=null,currentChat=null;
+let db=JSON.parse(localStorage.getItem('loHChat'))||{users:{},messages:{},contacts:{}};
+
+function saveDB(){ localStorage.setItem('loHChat',JSON.stringify(db)); }
+
+function renderContacts(){
+  const c=el('contacts'); c.innerHTML='';
+  (db.contacts[me]||[]).forEach(phone=>{
+    const contact=db.users[phone]||{phone,name:phone};
+    const d=document.createElement('div');
+    d.className='contact';
+    d.textContent=(contact.name||contact.phone)+' — '+contact.phone;
+    d.onclick=()=>openChat(contact.phone,contact.name);
+    c.appendChild(d);
+  });
+}
+
+function openChat(phone,name){
+  currentChat=phone;
+  el('chat-header').textContent=name||phone;
+  el('composer').style.display='flex';
+  renderMessages();
+}
+
+function renderMessages(){
+  const box=el('messages'); box.innerHTML='';
+  const conv=db.messages[me+'_'+currentChat]||[];
+  conv.forEach(m=>{
+    const d=document.createElement('div');
+    d.className='msg'+(m.from===me?' me':'');
+    if(m.type==='text') d.textContent=m.text;
+    if(m.type==='file') d.textContent='[File] '+m.name;
+    if(m.type==='location') d.textContent='[Location] '+m.lat+', '+m.lng;
+    box.appendChild(d);
+  });
+  box.scrollTop=box.scrollHeight;
+}
+
+function el(id){return document.getElementById(id);}
+
+el('login-btn').onclick=()=>{
+  const phone=el('phone').value.trim();
+  if(!phone)return alert('Masukkan nomor');
+  me=phone; 
+  if(!db.users[me]) db.users[me]={phone, name:'',};
+  if(!db.contacts[me]) db.contacts[me]=[];
+  el('auth-area').style.display='none';
+  el('user-area').style.display='block';
+  el('me-name').textContent='User '+me; el('me-phone').textContent=me;
+  renderContacts();
+};
+
+el('add-contact').onclick=()=>{
+  const name=el('add-name').value.trim(),phone=el('add-phone').value.trim();
+  if(!phone)return alert('Masukkan nomor');
+  if(!db.users[phone]) db.users[phone]={phone,name};
+  if(!db.contacts[me].includes(phone)) db.contacts[me].push(phone);
+  saveDB(); renderContacts(); el('add-name').value=''; el('add-phone').value='';
+};
+
+el('logout').onclick=()=>{me=null; currentChat=null; el('auth-area').style.display='block'; el('user-area').style.display='none';};
+
+el('send-msg').onclick=()=>{
+  if(!currentChat) return alert('Pilih kontak');
+  const text=el('msg-input').value.trim();
+  const fileInput=el('msg-file'); 
+  if(!text && fileInput.files.length===0) return;
+  db.messages[me+'_'+currentChat]=db.messages[me+'_'+currentChat]||[];
+  db.messages[currentChat+'_'+me]=db.messages[currentChat+'_'+me]||[];
+  if(text){
+    const msg={from:me,to:currentChat,type:'text',text,time:Date.now()};
+    db.messages[me+'_'+currentChat].push(msg);
+    db.messages[currentChat+'_'+me].push(msg);
+  }
+  if(fileInput.files.length>0){
+    const f=fileInput.files[0];
+    const reader=new FileReader();
+    reader.onload=(e)=>{
+      const msg={from:me,to:currentChat,type:'file',text:'[File]',name:f.name,data:e.target.result,time:Date.now()};
+      db.messages[me+'_'+currentChat].push(msg);
+      db.messages[currentChat+'_'+me].push(msg);
+      saveDB(); renderMessages();
+    };
+    reader.readAsDataURL(f);
+  }
+  el('msg-input').value=''; el('msg-file').value='';
+  saveDB(); renderMessages();
+};
+
+el('send-loc').onclick=()=>{
+  if(!currentChat) return alert('Pilih kontak');
+  if(!navigator.geolocation) return alert('Browser tidak support lokasi');
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const msg={from:me,to:currentChat,type:'location',lat:pos.coords.latitude,lng:pos.coords.longitude,time:Date.now()};
+    db.messages[me+'_'+currentChat]=db.messages[me+'_'+currentChat]||[];
+    db.messages[currentChat+'_'+me]=db.messages[currentChat+'_'+me]||[];
+    db.messages[me+'_'+currentChat].push(msg);
+    db.messages[currentChat+'_'+me].push(msg);
+    saveDB(); renderMessages();
+  });
+};
+</script>
+</body>
+</html>
