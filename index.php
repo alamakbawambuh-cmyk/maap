@@ -1,68 +1,147 @@
-/*
-Wa-like Chat Web Full Node.js + SMS OTP (Twilio optional)
-- Single file server.js
-- Realtime chat via Socket.io
-- Login dengan nomor HP + OTP
-- Tambah kontak, kirim pesan
-- Frontend langsung diserve dari Node.js
+<?php
+// index.php
+session_start();
 
-Cara pakai:
-1. Upload file ini ke server Node.js (Render, Railway, VPS, dll)
-2. Install dependencies:
-   npm install express socket.io body-parser twilio
-3. Set environment variables TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER (opsional)
-4. Jalankan:
-   node server.js
-5. Akses di browser
-*/
+// Path DB file
+define('DB_FILE','db.json');
 
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const bodyParser = require('body-parser');
-const fs = require('fs');
-
-const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID || null;
-const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN || null;
-const TWILIO_PHONE = process.env.TWILIO_PHONE_NUMBER || null;
-let twilioClient = null;
-if (TWILIO_SID && TWILIO_TOKEN) {
-  const twilio = require('twilio');
-  twilioClient = twilio(TWILIO_SID, TWILIO_TOKEN);
+// Load DB
+if(file_exists(DB_FILE)){
+    $DB=json_decode(file_get_contents(DB_FILE),true);
+}else{
+    $DB=['users'=>[],'otps'=>[]];
 }
 
-const DB_FILE = './db.json';
-let DB = { users: {}, otps: {} };
-try { if (fs.existsSync(DB_FILE)) DB = JSON.parse(fs.readFileSync(DB_FILE,'utf8')) || DB; } 
-catch(e){ console.warn('DB load fail', e); }
+// Save DB function
+function saveDB($DB){ file_put_contents(DB_FILE,json_encode($DB,JSON_PRETTY_PRINT)); }
 
-function saveDB(){ try{ fs.writeFileSync(DB_FILE, JSON.stringify(DB,null,2)) } catch(e){console.warn(e)} }
-function genOTP(){ return Math.floor(100000+Math.random()*900000).toString(); }
+// Helper: generate OTP
+function genOTP(){ return rand(100000,999999); }
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+// Handle AJAX actions
+$action=$_POST['action']??'';
+$response=['ok'=>false];
 
-app.use(bodyParser.json());
+if($action=='send_otp'){
+    $phone=$_POST['phone']??'';
+    if(!$phone){ $response['error']='No phone'; echo json_encode($response); exit;}
+    $otp=genOTP();
+    $DB['otps'][$phone]=$otp;
+    saveDB($DB);
+    // Twilio optional: kirim SMS. Untuk demo, OTP dicetak
+    $response=['ok'=>true,'otp'=>$otp];
+    echo json_encode($response);
+    exit;
+}
 
-app.get('/', (req,res)=>{
-  res.set('Content-Type','text/html');
-  res.send(`<!doctype html>
+if($action=='verify_otp'){
+    $phone=$_POST['phone']??''; $otp=$_POST['otp']??'';
+    if(!$phone||!$otp){ $response['error']='Missing'; echo json_encode($response); exit;}
+    if(!isset($DB['otps'][$phone])||$DB['otps'][$phone]!=$otp){ $response['error']='Invalid OTP'; echo json_encode($response); exit;}
+    unset($DB['otps'][$phone]);
+    if(!isset($DB['users'][$phone])) $DB['users'][$phone]=['phone'=>$phone,'name'=>'','contacts'=>[],'messages'=>[]];
+    saveDB($DB);
+    $_SESSION['me']=$phone;
+    $response=['ok'=>true,'user'=>$DB['users'][$phone]];
+    echo json_encode($response); exit;
+}
+
+if($action=='add_contact'){
+    $me=$_SESSION['me']??''; if(!$me){$response['error']='Not logged in';echo json_encode($response);exit;}
+    $phone=$_POST['phone']??''; $name=$_POST['name']??'';
+    if(!$phone){ $response['error']='No contact phone'; echo json_encode($response); exit;}
+    if(!isset($DB['users'][$phone])) $DB['users'][$phone]=['phone'=>$phone,'name'=>$name,'contacts'=>[],'messages'=>[]];
+    if(!in_array($phone,$DB['users'][$me]['contacts'])) $DB['users'][$me]['contacts'][]=$phone;
+    saveDB($DB);
+    $response=['ok'=>true,'contacts'=>$DB['users'][$me]['contacts']];
+    echo json_encode($response); exit;
+}
+
+if($action=='send_msg'){
+    $me=$_SESSION['me']??''; if(!$me){$response['error']='Not logged in';echo json_encode($response);exit;}
+    $to=$_POST['to']??''; $text=$_POST['text']??''; if(!$to||!$text){$response['error']='Missing';echo json_encode($response);exit;}
+    if(!isset($DB['users'][$to])) $DB['users'][$to]=['phone'=>$to,'name'=>'','contacts'=>[],'messages'=>[]];
+    $msg=['from'=>$me,'text'=>$text,'time'=>time()];
+    $DB['users'][$me]['messages'][$to][]=$msg;
+    $DB['users'][$to]['messages'][$me][]=$msg;
+    saveDB($DB);
+    $response=['ok'=>true,'messages'=>$DB['users'][$me]['messages'][$to]];
+    echo json_encode($response); exit;
+}
+
+if($action=='get_msgs'){
+    $me=$_SESSION['me']??''; if(!$me){$response['error']='Not logged in';echo json_encode($response);exit;}
+    $with=$_POST['with']??''; if(!$with){$response['error']='Missing';echo json_encode($response);exit;}
+    $msgs=$DB['users'][$me]['messages'][$with]??[];
+    $response=['ok'=>true,'messages'=>$msgs];
+    echo json_encode($response); exit;
+}
+
+// If not AJAX, render HTML
+$me=$_SESSION['me']??'';
+$contacts=[];
+if($me){ $contacts=$DB['users'][$me]['contacts']??[]; }
+?>
+<!doctype html>
 <html lang="id">
 <head>
-<meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>LoHChat Demo</title>
+<meta charset="utf-8">
+<title>LoHChat PHP Demo</title>
 <style>
-body{margin:0;font-family:sans-serif;background:#0b1220;color:#e6eef8}
-.app{display:flex;height:100vh}.sidebar{width:280px;background:#0f1724;padding:12px;display:flex;flex-direction:column;gap:10px}
-.brand{font-weight:700;color:#7dd3fc}.login input, .login button{width:100%;padding:8px;margin-bottom:4px;border-radius:6px;background:#0b1220;color:#e6eef8;border:1px solid #555}
-.contacts{flex:1;overflow:auto}.contact{padding:6px;margin-bottom:6px;background:rgba(255,255,255,0.05);cursor:pointer}
-.main{flex:1;display:flex;flex-direction:column}.chat-header{padding:10px;border-bottom:1px solid rgba(255,255,255,0.03)}
-.messages{flex:1;padding:12px;overflow:auto}.msg{max-width:60%;padding:8px;border-radius:8px;margin-bottom:6px;background:rgba(255,255,255,0.05)}
-.msg.me{margin-left:auto;background:#3b82f6;color:white}.composer{display:flex;gap:6px;padding:10px;border-top:1px solid rgba(255,255,255,0.03)}
-.small{font-size:12px;color:#94a3b8}
+body{font-family:sans-serif;background:#0b1220;color:#e6eef8;margin:0;padding:0;}
+.sidebar{width:300px;background:#0f1724;float:left;height:100vh;padding:10px;box-sizing:border-box;}
+.main{margin-left:300px;padding:10px;}
+input,button{padding:6px;margin:2px 0;width:100%;}
+.contact{padding:6px;background:rgba(255,255,255,0.05);margin-bottom:4px;cursor:pointer;}
+.msg{margin:4px;padding:6px;border-radius:6px;}
+.msg.me{background:#3b82f6;color:white;text-align:right;}
 </style>
+<script>
+function ajax(action,data,callback){
+    data.action=action;
+    var xhr=new XMLHttpRequest();
+    xhr.open('POST','',true);
+    xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
+    var params=Object.keys(data).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(data[k])).join('&');
+    xhr.onreadystatechange=function(){if(xhr.readyState==4)callback(JSON.parse(xhr.responseText));};
+    xhr.send(params);
+}
+
+function sendOTP(){ var phone=document.getElementById('phone').value; ajax('send_otp',{phone:phone},r=>alert('OTP: '+r.otp)) }
+function verifyOTP(){ var phone=document.getElementById('phone').value; var otp=document.getElementById('otp').value; ajax('verify_otp',{phone:phone,otp:otp},r=>{if(r.ok)location.reload();else alert(r.error)}) }
+function addContact(){ var name=document.getElementById('contact-name').value; var phone=document.getElementById('contact-phone').value; ajax('add_contact',{name:name,phone:phone},r=>{if(r.ok)location.reload();else alert(r.error)}) }
+function sendMsg(){ var to=document.getElementById('chat-with').dataset.to; var text=document.getElementById('msg-input').value; ajax('send_msg',{to:to,text:text},r=>{if(r.ok)showMsgs(to,r.messages);else alert(r.error)}) }
+function getMsgs(to){ ajax('get_msgs',{with:to},r=>{if(r.ok)showMsgs(to,r.messages);else alert(r.error)}) }
+function showMsgs(to,msgs){ var box=document.getElementById('messages'); box.innerHTML=''; msgs.forEach(m=>{var div=document.createElement('div');div.className='msg'+(m.from=='<?php echo $me;?>'?' me':'');div.textContent=m.text;box.appendChild(div);}); document.getElementById('chat-with').dataset.to=to; }
+</script>
 </head>
+<body>
+<div class="sidebar">
+<h2>LoHChat PHP Demo</h2>
+<?php if(!$me): ?>
+<input id="phone" placeholder="Nomor HP +62"><button onclick="sendOTP()">Kirim OTP</button>
+<input id="otp" placeholder="Masukkan OTP"><button onclick="verifyOTP()">Login</button>
+<?php else: ?>
+<h4>Kontak</h4>
+<?php foreach($contacts as $c): ?><div class="contact" onclick="getMsgs('<?php echo $c;?>')"><?php echo $c;?></div><?php endforeach;?>
+<h4>Tambah kontak</h4>
+<input id="contact-name" placeholder="Nama kontak">
+<input id="contact-phone" placeholder="Nomor +62">
+<button onclick="addContact()">Tambah</button>
+<?php endif;?>
+</div>
+<div class="main">
+<?php if($me): ?>
+<h3 id="chat-with" data-to="">Chat Area</h3>
+<div id="messages" style="height:400px;overflow:auto;background:#111;padding:6px;"></div>
+<input id="msg-input" placeholder="Tulis pesan...">
+<button onclick="sendMsg()">Kirim</button>
+<?php else: ?>
+<p>Login untuk mulai chat</p>
+<?php endif;?>
+</div>
+</body>
+</html></head>
 <body>
 <div class="app">
 <div class="sidebar">
