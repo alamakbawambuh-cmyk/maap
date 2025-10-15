@@ -2,13 +2,15 @@
 <html lang="id">
 <head>
 <meta charset="utf-8">
-<title>LoHChat Local</title>
+<title>LoHChat Realtime</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
 <style>
 body{margin:0;font-family:sans-serif;background:#0b1220;color:#e6eef8}
 .app{display:flex;height:100vh}
-.sidebar{width:280px;background:#0f1724;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+.sidebar{width:300px;background:#0f1724;padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto}
 .brand{font-weight:700;color:#7dd3fc}
-input,button{width:100%;padding:6px;margin-bottom:4px;border-radius:6px;background:#0b1220;color:#e6eef8;border:1px solid #555}
+input,button{width:100%;padding:8px;margin-bottom:4px;border-radius:6px;background:#0b1220;color:#e6eef8;border:1px solid #555}
 .contacts{flex:1;overflow:auto}
 .contact{padding:6px;margin-bottom:6px;background:rgba(255,255,255,0.05);cursor:pointer}
 .main{flex:1;display:flex;flex-direction:column}
@@ -17,24 +19,23 @@ input,button{width:100%;padding:6px;margin-bottom:4px;border-radius:6px;backgrou
 .msg{max-width:60%;padding:8px;border-radius:8px;margin-bottom:6px;background:rgba(255,255,255,0.05);word-break:break-word}
 .msg.me{margin-left:auto;background:#3b82f6;color:white}
 .composer{display:flex;gap:6px;padding:10px;border-top:1px solid rgba(255,255,255,0.03)}
-.small{font-size:12px;color:#94a3b8}
 </style>
 </head>
 <body>
 <div class="app">
   <div class="sidebar">
-    <div class="brand">LoHChat Local</div>
+    <div class="brand">LoHChat Realtime</div>
     <div id="auth-area">
-      <input id="phone" placeholder="Nomor HP +62..." />
-      <button id="login-btn">Login (simulasi OTP)</button>
+      <input id="phone" placeholder="Nomor HP +62..."/>
+      <input id="name" placeholder="Nama Kamu"/>
+      <button id="login-btn">Login</button>
     </div>
     <div id="user-area" style="display:none">
-      <div><strong id="me-name"></strong><div class="small" id="me-phone"></div></div>
-      <input id="add-name" placeholder="Nama kontak" />
-      <input id="add-phone" placeholder="Nomor kontak" />
-      <button id="add-contact">Tambah Kontak</button>
-      <h4 class="small">Kontak</h4>
+      <h4>Kontak</h4>
       <div class="contacts" id="contacts"></div>
+      <input id="add-name" placeholder="Nama kontak"/>
+      <input id="add-phone" placeholder="Nomor kontak"/>
+      <button id="add-contact">Tambah Kontak</button>
       <button id="logout">Logout</button>
     </div>
   </div>
@@ -42,115 +43,132 @@ input,button{width:100%;padding:6px;margin-bottom:4px;border-radius:6px;backgrou
     <div class="chat-header" id="chat-header">Pilih kontak</div>
     <div class="messages" id="messages"></div>
     <div class="composer" id="composer" style="display:none">
-      <input type="text" id="msg-input" placeholder="Tulis pesan..." />
-      <input type="file" id="msg-file" />
+      <input id="msg-input" placeholder="Tulis pesan..."/>
+      <input type="file" id="msg-file"/>
       <button id="send-msg">Kirim</button>
       <button id="send-loc">Kirim Lokasi</button>
     </div>
   </div>
 </div>
+
 <script>
-let me=null,currentChat=null;
-let db=JSON.parse(localStorage.getItem('loHChat'))||{users:{},messages:{},contacts:{}};
+// ======== Supabase config ========
+// Ganti dengan Supabase URL & anon key kamu
+const SUPABASE_URL = "https://YOUR_PROJECT.supabase.co";
+const SUPABASE_KEY = "YOUR_ANON_KEY";
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-function saveDB(){ localStorage.setItem('loHChat',JSON.stringify(db)); }
+let me=null, currentChat=null;
 
-function renderContacts(){
+// ======== Helper ========
+function el(id){return document.getElementById(id);}
+function scrollBottom(){el('messages').scrollTop=el('messages').scrollHeight;}
+function renderContacts(list){
   const c=el('contacts'); c.innerHTML='';
-  (db.contacts[me]||[]).forEach(phone=>{
-    const contact=db.users[phone]||{phone,name:phone};
+  list.forEach(u=>{
     const d=document.createElement('div');
     d.className='contact';
-    d.textContent=(contact.name||contact.phone)+' — '+contact.phone;
-    d.onclick=()=>openChat(contact.phone,contact.name);
+    d.textContent=(u.name||u.phone)+' — '+u.phone;
+    d.onclick=()=>openChat(u);
     c.appendChild(d);
   });
 }
 
-function openChat(phone,name){
-  currentChat=phone;
-  el('chat-header').textContent=name||phone;
-  el('composer').style.display='flex';
-  renderMessages();
+// ======== Login ========
+el('login-btn').onclick=async ()=>{
+  const phone=el('phone').value.trim();
+  const name=el('name').value.trim();
+  if(!phone||!name) return alert('Isi nomor & nama');
+  me={phone,name};
+  await supabase.from('users').upsert({phone,name});
+  el('auth-area').style.display='none';
+  el('user-area').style.display='block';
+  loadContacts();
+};
+
+// ======== Contacts ========
+async function loadContacts(){
+  let {data:contacts}=await supabase.from('users').select('*').neq('phone',me.phone);
+  renderContacts(contacts||[]);
 }
 
-function renderMessages(){
+// ======== Add contact manually ========
+el('add-contact').onclick=async ()=>{
+  const phone=el('add-phone').value.trim();
+  const name=el('add-name').value.trim();
+  if(!phone||!name) return alert('Isi nomor & nama');
+  await supabase.from('users').upsert({phone,name});
+  el('add-name').value=''; el('add-phone').value='';
+  loadContacts();
+};
+
+// ======== Open Chat ========
+function openChat(contact){
+  currentChat=contact;
+  el('chat-header').textContent=contact.name||contact.phone;
+  el('composer').style.display='flex';
+  loadMessages();
+}
+
+// ======== Send Message ========
+el('send-msg').onclick=async ()=>{
+  if(!currentChat) return alert('Pilih kontak');
+  const text=el('msg-input').value.trim();
+  const fileInput=el('msg-file');
+  if(!text && fileInput.files.length===0) return;
+  let msg={from:me.phone,to:currentChat.phone,type:'text',text,time:Date.now()};
+  if(fileInput.files.length>0){
+    const f=fileInput.files[0];
+    const data=await f.arrayBuffer();
+    msg={from:me.phone,to:currentChat.phone,type:'file',name:f.name,data:Array.from(new Uint8Array(data)),time:Date.now()};
+  }
+  await supabase.from('messages').insert(msg);
+  el('msg-input').value=''; el('msg-file').value='';
+};
+
+// ======== Send Location ========
+el('send-loc').onclick=()=>{
+  if(!currentChat) return alert('Pilih kontak');
+  if(!navigator.geolocation) return alert('Browser tidak support lokasi');
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const msg={from:me.phone,to:currentChat.phone,type:'location',lat:pos.coords.latitude,lng:pos.coords.longitude,time:Date.now()};
+    await supabase.from('messages').insert(msg);
+  });
+};
+
+// ======== Load messages & realtime subscription ========
+async function loadMessages(){
+  const {data}=await supabase.from('messages')
+    .select('*')
+    .or(`and(from.eq.${me.phone},to.eq.${currentChat.phone}),and(from.eq.${currentChat.phone},to.eq.${me.phone})`)
+    .order('time',{ascending:true});
+  renderMessages(data||[]);
+}
+
+function renderMessages(msgs){
   const box=el('messages'); box.innerHTML='';
-  const conv=db.messages[me+'_'+currentChat]||[];
-  conv.forEach(m=>{
+  msgs.forEach(m=>{
     const d=document.createElement('div');
-    d.className='msg'+(m.from===me?' me':'');
+    d.className='msg'+(m.from===me.phone?' me':'');
     if(m.type==='text') d.textContent=m.text;
     if(m.type==='file') d.textContent='[File] '+m.name;
     if(m.type==='location') d.textContent='[Location] '+m.lat+', '+m.lng;
     box.appendChild(d);
   });
-  box.scrollTop=box.scrollHeight;
+  scrollBottom();
 }
 
-function el(id){return document.getElementById(id);}
+// ======== Realtime subscription ========
+supabase.channel('public:messages')
+  .on('postgres_changes', {event:'INSERT', schema:'public', table:'messages'}, payload=>{
+    if(!currentChat) return;
+    const m=payload.new;
+    if((m.from===me.phone && m.to===currentChat.phone) || (m.from===currentChat.phone && m.to===me.phone)){
+      loadMessages();
+    }
+  }).subscribe();
 
-el('login-btn').onclick=()=>{
-  const phone=el('phone').value.trim();
-  if(!phone)return alert('Masukkan nomor');
-  me=phone; 
-  if(!db.users[me]) db.users[me]={phone, name:'',};
-  if(!db.contacts[me]) db.contacts[me]=[];
-  el('auth-area').style.display='none';
-  el('user-area').style.display='block';
-  el('me-name').textContent='User '+me; el('me-phone').textContent=me;
-  renderContacts();
-};
-
-el('add-contact').onclick=()=>{
-  const name=el('add-name').value.trim(),phone=el('add-phone').value.trim();
-  if(!phone)return alert('Masukkan nomor');
-  if(!db.users[phone]) db.users[phone]={phone,name};
-  if(!db.contacts[me].includes(phone)) db.contacts[me].push(phone);
-  saveDB(); renderContacts(); el('add-name').value=''; el('add-phone').value='';
-};
-
-el('logout').onclick=()=>{me=null; currentChat=null; el('auth-area').style.display='block'; el('user-area').style.display='none';};
-
-el('send-msg').onclick=()=>{
-  if(!currentChat) return alert('Pilih kontak');
-  const text=el('msg-input').value.trim();
-  const fileInput=el('msg-file'); 
-  if(!text && fileInput.files.length===0) return;
-  db.messages[me+'_'+currentChat]=db.messages[me+'_'+currentChat]||[];
-  db.messages[currentChat+'_'+me]=db.messages[currentChat+'_'+me]||[];
-  if(text){
-    const msg={from:me,to:currentChat,type:'text',text,time:Date.now()};
-    db.messages[me+'_'+currentChat].push(msg);
-    db.messages[currentChat+'_'+me].push(msg);
-  }
-  if(fileInput.files.length>0){
-    const f=fileInput.files[0];
-    const reader=new FileReader();
-    reader.onload=(e)=>{
-      const msg={from:me,to:currentChat,type:'file',text:'[File]',name:f.name,data:e.target.result,time:Date.now()};
-      db.messages[me+'_'+currentChat].push(msg);
-      db.messages[currentChat+'_'+me].push(msg);
-      saveDB(); renderMessages();
-    };
-    reader.readAsDataURL(f);
-  }
-  el('msg-input').value=''; el('msg-file').value='';
-  saveDB(); renderMessages();
-};
-
-el('send-loc').onclick=()=>{
-  if(!currentChat) return alert('Pilih kontak');
-  if(!navigator.geolocation) return alert('Browser tidak support lokasi');
-  navigator.geolocation.getCurrentPosition(pos=>{
-    const msg={from:me,to:currentChat,type:'location',lat:pos.coords.latitude,lng:pos.coords.longitude,time:Date.now()};
-    db.messages[me+'_'+currentChat]=db.messages[me+'_'+currentChat]||[];
-    db.messages[currentChat+'_'+me]=db.messages[currentChat+'_'+me]||[];
-    db.messages[me+'_'+currentChat].push(msg);
-    db.messages[currentChat+'_'+me].push(msg);
-    saveDB(); renderMessages();
-  });
-};
+el('logout').onclick=()=>location.reload();
 </script>
 </body>
 </html>
